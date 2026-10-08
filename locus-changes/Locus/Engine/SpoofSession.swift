@@ -85,6 +85,12 @@ final class SpoofSession: ObservableObject {
     @Published var isBusy = false
     @Published var joystickActive = false
     @Published private(set) var routePlaybackActive = false
+    @Published private(set) var routePaused = false
+    @Published private(set) var routeTotalDistance = 0.0
+    @Published private(set) var routeRemainingDistance = 0.0
+    @Published private(set) var activeRouteCoordinates: [CLLocationCoordinate2D] = []
+    @Published private(set) var scheduledRoutes: [ScheduledRoute] = []
+    @Published private(set) var scheduleNotificationNote: String?
     @Published var injectionMode: InjectionMode = InjectionMode(
         rawValue: UserDefaults.standard.string(forKey: "locus.injectionMode") ?? "coordinates"
     ) ?? .coordinates {
@@ -101,6 +107,9 @@ final class SpoofSession: ObservableObject {
     private var joystickTimer: Timer?
     private var routeTask: Task<Void, Never>?
     private var routeGeneration: UUID?
+    private var routeClockResetTime = 0.0
+    private var schedulerTimer: Timer?
+    private var schedulerForeground = false
     private var joystickLastTick = 0.0
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
     private var joystickVector: CGVector = .zero
@@ -108,10 +117,15 @@ final class SpoofSession: ObservableObject {
 
     private let favoritesKey = "locus.favorites"
     private let recentsKey = "locus.recents"
+    private let schedulesKey = "locus.scheduledRoutes"
 
     init() {
         favorites = SavedPlace.load(key: favoritesKey)
         recents = SavedPlace.load(key: recentsKey)
+        if let data = UserDefaults.standard.data(forKey: schedulesKey),
+           let saved = try? JSONDecoder().decode([ScheduledRoute].self, from: data) {
+            scheduledRoutes = Array(saved.filter(\.isValid).prefix(10)).sorted { $0.startsAt < $1.startsAt }
+        }
     }
 
     var isSpoofing: Bool {
@@ -127,6 +141,15 @@ final class SpoofSession: ObservableObject {
 
     func resetSpeedToPreset() {
         customSpeedMPH = nil
+    }
+
+    var routeSecondsRemaining: TimeInterval {
+        RouteTiming.seconds(distance: routeRemainingDistance, speedMPH: speedMPH)
+    }
+
+    var routeCompletionFraction: Double {
+        guard routeTotalDistance > 0 else { return 0 }
+        return min(1, max(0, 1 - routeRemainingDistance / routeTotalDistance))
     }
 
     private func movementSpeedMetersPerSecond() -> Double {
@@ -219,35 +242,65 @@ final class SpoofSession: ObservableObject {
         if wasActive { sendRestingSpeed() }
     }
 
-    func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
-        guard pairing.hasPairingFile || injectionMode == .nativeSpeed,
-              coordinates.count >= 2 else { return }
+    func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore,
+                     scheduledID: UUID? = nil) {
+        guard pairing.hasPairingFile || injectionMode == .nativeSpeed else {
+            lastError = "Import an RPPairing file in Settings first."
+            return
+        }
+        let points = coordinates.map { RoutePoint(latitude: $0.latitude, longitude: $0.longitude) }
+        guard points.count >= 2, points.allSatisfy(\.isValid) else {
+            lastError = "Build or import a valid route first."
+            return
+        }
+        let lengths = RouteTiming.segmentLengths(points)
+        let totalDistance = lengths.reduce(0, +)
+        guard totalDistance > 0 else {
+            lastError = "The route needs two different locations."
+            return
+        }
         cancelRoute()
         stopJoystick()
         let generation = UUID()
         routeGeneration = generation
         routePlaybackActive = true
+        routePaused = false
+        routeClockResetTime = ProcessInfo.processInfo.systemUptime
+        routeTotalDistance = totalDistance
+        routeRemainingDistance = totalDistance
+        activeRouteCoordinates = coordinates
         routeTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             defer {
                 if self.routeGeneration == generation {
                     self.routePlaybackActive = false
+                    self.routePaused = false
                     self.routeTask = nil
                     self.routeGeneration = nil
                 }
             }
             self.apply(coordinates[0], pairing: pairing, markRecent: true)
-            guard self.isSpoofing else { return }
-            let lengths = zip(coordinates, coordinates.dropFirst()).map { start, end in
-                CLLocation(latitude: start.latitude, longitude: start.longitude)
-                    .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
+            guard self.isSpoofing else {
+                if let scheduledID {
+                    self.markScheduleReady(scheduledID, note: self.lastError ?? "Could not start. Check the location connection and try again.")
+                }
+                return
+            }
+            if let scheduledID {
+                self.cancelScheduledRoute(scheduledID)
             }
             var progress = PlaybackProgress(
                 segmentLengths: lengths,
                 startedAt: ProcessInfo.processInfo.systemUptime
             )
             while !progress.hasFinished {
-                if Task.isCancelled || self.routeGeneration != generation { return }
+                if Task.isCancelled || self.routeGeneration != generation || self.status.isDropped || self.status == .idle { return }
+                progress.rebaseClock(to: self.routeClockResetTime)
+                if self.routePaused {
+                    progress.rebaseClock(to: ProcessInfo.processInfo.systemUptime)
+                    do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
+                    continue
+                }
                 let speed = self.movementSpeedMetersPerSecond()
                 let interval = min(MovementSpeed.maximumStepSeconds, progress.remainingInSegment / speed)
                 let deadline = progress.lastUpdateTime + interval
@@ -258,7 +311,13 @@ final class SpoofSession: ObservableObject {
                     return
                 }
                 if Task.isCancelled || self.routeGeneration != generation { return }
+                if self.routePaused {
+                    progress.rebaseClock(to: ProcessInfo.processInfo.systemUptime)
+                    continue
+                }
+                progress.rebaseClock(to: self.routeClockResetTime)
                 progress.advance(to: ProcessInfo.processInfo.systemUptime, metersPerSecond: speed)
+                self.routeRemainingDistance = progress.remainingDistance
                 let coordinate: CLLocationCoordinate2D
                 if progress.hasFinished {
                     coordinate = coordinates[coordinates.count - 1]
@@ -267,7 +326,7 @@ final class SpoofSession: ObservableObject {
                     let end = coordinates[progress.segmentIndex + 1]
                     coordinate = CLLocationCoordinate2D(
                         latitude: start.latitude + (end.latitude - start.latitude) * progress.fraction,
-                        longitude: start.longitude + (end.longitude - start.longitude) * progress.fraction
+                        longitude: Self.interpolatedLongitude(start.longitude, end.longitude, fraction: progress.fraction)
                     )
                 }
                 let course = progress.hasFinished ? -1 : NativeLocationPayload.bearing(
@@ -283,13 +342,171 @@ final class SpoofSession: ObservableObject {
         }
     }
 
+    func toggleRoutePause() {
+        guard routePlaybackActive else { return }
+        routePaused.toggle()
+        routeClockResetTime = ProcessInfo.processInfo.systemUptime
+        if routePaused { sendRestingSpeed() }
+    }
+
+    func stopRoute() {
+        cancelRoute()
+    }
+
+    private static func interpolatedLongitude(_ start: Double, _ end: Double, fraction: Double) -> Double {
+        let delta = (end - start + 540).truncatingRemainder(dividingBy: 360) - 180
+        let value = start + delta * fraction
+        return (value + 540).truncatingRemainder(dividingBy: 360) - 180
+    }
+
     private func cancelRoute() {
         let wasActive = routePlaybackActive
         routeTask?.cancel()
         routeTask = nil
         routeGeneration = nil
         routePlaybackActive = false
+        routePaused = false
+        routeTotalDistance = 0
+        routeRemainingDistance = 0
+        activeRouteCoordinates = []
         if wasActive { sendRestingSpeed() }
+    }
+
+    func scheduleRoute(_ coordinates: [CLLocationCoordinate2D], name: String, startsAt: Date) -> Bool {
+        guard scheduledRoutes.count < 10 else {
+            lastError = "You can keep up to 10 scheduled routes. Cancel one before adding another."
+            return false
+        }
+        guard startsAt > Date() else {
+            lastError = "Choose a start time in the future."
+            return false
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let route = ScheduledRoute(name: trimmed.isEmpty ? "Scheduled route" : trimmed,
+            points: coordinates.map { RoutePoint(latitude: $0.latitude, longitude: $0.longitude) },
+            startsAt: startsAt, speedMPH: speedMPH, variationEnabled: speedVariationEnabled,
+            travelMode: travelMode.rawValue, injectionMode: injectionMode.rawValue)
+        guard route.isValid else {
+            lastError = "Use a valid route with 2–10,000 points and two different locations."
+            return false
+        }
+        scheduledRoutes.append(route)
+        scheduledRoutes.sort { $0.startsAt < $1.startsAt }
+        saveScheduledRoutes()
+        scheduleReminder(for: route)
+        return true
+    }
+
+    func cancelScheduledRoute(_ id: UUID) {
+        guard let route = scheduledRoutes.first(where: { $0.id == id }) else { return }
+        scheduledRoutes.removeAll { $0.id == id }
+        saveScheduledRoutes()
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [route.notificationID])
+        center.removeDeliveredNotifications(withIdentifiers: [route.notificationID])
+    }
+
+    func startScheduledRoute(_ id: UUID, pairing: PairingStore) {
+        guard let route = scheduledRoutes.first(where: { $0.id == id }) else { return }
+        guard !routePlaybackActive, !joystickActive, !isBusy else {
+            markScheduleReady(id, note: "Another route or joystick is active. Stop it, then tap Start now.")
+            return
+        }
+        guard let engine = InjectionMode(rawValue: route.injectionMode),
+              let mode = TravelMode(rawValue: route.travelMode), route.isValid else {
+            markScheduleReady(id, note: "The saved route could not be read. Cancel it and schedule again.")
+            return
+        }
+        guard engine == .nativeSpeed || pairing.hasPairingFile else {
+            markScheduleReady(id, note: "Import or create a pairing file, then tap Start now.")
+            return
+        }
+        guard engine == injectionMode || simulated == nil else {
+            markScheduleReady(id, note: "Stop the current spoof before starting a route with a different location engine.")
+            return
+        }
+        injectionMode = engine
+        travelMode = mode
+        speedMPH = route.speedMPH
+        speedVariationEnabled = route.variationEnabled
+        markScheduleReady(id, note: "Starting…")
+        followRoute(route.points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) },
+                    pairing: pairing, scheduledID: id)
+    }
+
+    func setSchedulerForeground(_ active: Bool, pairing: PairingStore) {
+        guard active != schedulerForeground else { return }
+        schedulerForeground = active
+        schedulerTimer?.invalidate()
+        schedulerTimer = nil
+        guard active else { return }
+        // Opening the app after a due time requires a deliberate Start now.
+        checkScheduledRoutes(pairing: pairing, canStartAutomatically: false)
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.schedulerForeground else { return }
+                self.checkScheduledRoutes(pairing: pairing,
+                    canStartAutomatically: UIApplication.shared.applicationState == .active)
+            }
+        }
+        schedulerTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func checkScheduledRoutes(pairing: PairingStore, canStartAutomatically: Bool) {
+        let now = Date()
+        for route in scheduledRoutes {
+            switch route.decision(at: now, canStartAutomatically: canStartAutomatically,
+                                  isBusy: routePlaybackActive || joystickActive || isBusy) {
+            case .wait: break
+            case .start: startScheduledRoute(route.id, pairing: pairing)
+            case .needsOpen:
+                markScheduleReady(route.id, note: "The start time passed while the app was inactive. Tap Start now when ready.")
+            case .busy:
+                markScheduleReady(route.id, note: "Another route or joystick was active at the start time. Tap Start now when ready.")
+            }
+        }
+    }
+
+    private func markScheduleReady(_ id: UUID, note: String) {
+        guard let index = scheduledRoutes.firstIndex(where: { $0.id == id }) else { return }
+        scheduledRoutes[index].status = .ready
+        scheduledRoutes[index].note = note
+        saveScheduledRoutes()
+    }
+
+    private func saveScheduledRoutes() {
+        if let data = try? JSONEncoder().encode(scheduledRoutes) {
+            UserDefaults.standard.set(data, forKey: schedulesKey)
+        }
+    }
+
+    private func scheduleReminder(for route: ScheduledRoute) {
+        Task { [weak self] in
+            let center = UNUserNotificationCenter.current()
+            do {
+                let allowed = try await center.requestAuthorization(options: [.alert, .sound])
+                guard let self else { return }
+                guard allowed else {
+                    self.scheduleNotificationNote = "Notifications are off. Keep RimoSpoof open for a scheduled start."
+                    return
+                }
+                guard self.scheduledRoutes.contains(where: { $0.id == route.id && $0.status == .waiting }) else { return }
+                let content = UNMutableNotificationContent()
+                content.title = "RimoSpoof route ready"
+                content.body = "\(route.name): open RimoSpoof and tap Start now. Keep the location connection available."
+                content.sound = .default
+                let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: route.startsAt)
+                let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+                try await center.add(UNNotificationRequest(identifier: route.notificationID, content: content, trigger: trigger))
+                if !self.scheduledRoutes.contains(where: { $0.id == route.id }) {
+                    center.removePendingNotificationRequests(withIdentifiers: [route.notificationID])
+                }
+                self.scheduleNotificationNote = nil
+            } catch {
+                self?.scheduleNotificationNote = "The route was saved, but its reminder could not be scheduled."
+            }
+        }
     }
 
     func addFavorite(name: String, coordinate: CLLocationCoordinate2D) {
@@ -448,7 +665,7 @@ final class SpoofSession: ObservableObject {
         resendTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let sim = self.simulated,
-                      !self.routePlaybackActive, !self.joystickActive else { return }
+                      (!self.routePlaybackActive || self.routePaused), !self.joystickActive else { return }
                 _ = self.send(sim, pairing: pairing, speed: 0, course: -1)
             }
         }
@@ -519,7 +736,7 @@ final class SpoofSession: ObservableObject {
     private func postDropNotification(_ message: String) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         let content = UNMutableNotificationContent()
-        content.title = "Locus spoof dropped"
+        content.title = "RimoSpoof spoof dropped"
         content.body = message
         content.sound = .default
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)

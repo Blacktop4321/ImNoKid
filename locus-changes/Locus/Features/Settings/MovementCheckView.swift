@@ -13,7 +13,7 @@ struct MovementCheckView: View {
     }
 
     private var playbackState: String {
-        if session.routePlaybackActive { return "Route running" }
+        if session.routePlaybackActive { return session.routePaused ? "Route paused" : "Route running" }
         if session.joystickActive { return "Joystick active" }
         return session.isSpoofing ? "Holding a location" : "Stopped"
     }
@@ -30,7 +30,7 @@ struct MovementCheckView: View {
                     LabeledContent("Core Motion simulation", value: "Not provided")
                 }
             } header: {
-                Text("Locus")
+                Text("RimoSpoof")
             } footer: {
                 Text("Selected speed controls route and joystick movement. Start a route before opening this page to check it while playing.")
             }
@@ -52,7 +52,7 @@ struct MovementCheckView: View {
             } header: {
                 Text("iPhone location reading")
             } footer: {
-                Text("Unavailable means iOS has not supplied Locus with a valid speed. An old update time means the reading may be stale.")
+                Text("Unavailable means iOS has not supplied RimoSpoof with a valid speed. An old update time means the reading may be stale.")
             }
 
             Section {
@@ -63,7 +63,7 @@ struct MovementCheckView: View {
             } header: {
                 Text("iPhone motion reading")
             } footer: {
-                Text("These are readings received by Locus. Life360 may interpret them differently. This check reads motion; it does not simulate it. Permissions here apply to Locus separately from Life360.")
+                Text("These are readings received by RimoSpoof. Life360 may interpret them differently. This check reads motion; it does not simulate it. Permissions here apply to RimoSpoof separately from Life360.")
             }
         }
         .navigationTitle("Movement check")

@@ -5,6 +5,7 @@ struct RoutePlannerSheet: View {
     @Binding var start: CLLocationCoordinate2D?
     @Binding var end: CLLocationCoordinate2D?
     @Binding var isRouting: Bool
+    var path: [CLLocationCoordinate2D]
     var onBuild: () -> Void
     var onPlay: () -> Void
     var onImportGPX: () -> Void
@@ -13,12 +14,42 @@ struct RoutePlannerSheet: View {
 
     @EnvironmentObject private var session: SpoofSession
     @Environment(\.dismiss) private var dismiss
+    @State private var scheduledName = "My route"
+    @State private var scheduledAt = Date().addingTimeInterval(900)
+    @State private var scheduleSaved = false
+
+    private var distance: Double {
+        RouteTiming.segmentLengths(path.map { RoutePoint(latitude: $0.latitude, longitude: $0.longitude) }).reduce(0, +)
+    }
+
+    private var duration: TimeInterval {
+        RouteTiming.seconds(distance: distance, speedMPH: session.speedMPH)
+    }
 
     var body: some View {
         NavigationStack {
             List {
                 Section("Speed") {
                     MovementSpeedControls()
+                }
+
+                Section("Route estimate") {
+                    if path.count >= 2, distance > 0 {
+                        LabeledContent("Distance", value: RouteTiming.distanceText(distance))
+                        LabeledContent("Travel time", value: RouteTiming.durationText(duration))
+                        LabeledContent("Arrive if started now") {
+                            Text(Date().addingTimeInterval(duration), style: .time)
+                        }
+                    } else {
+                        Text("Build, draw, or import a route to see its travel time.")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Estimates use the selected speed. Speed changes, variation, pauses, and connection delays can change arrival.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+
+                if session.routePlaybackActive {
+                    Section("Current route") { RouteProgressCard() }
                 }
 
                 Section("Road route") {
@@ -55,6 +86,7 @@ struct RoutePlannerSheet: View {
                     Button(action: onPlay) {
                         Label("Follow route", systemImage: "play.fill")
                     }
+                    .disabled(path.count < 2 || distance == 0 || session.routePlaybackActive || session.isBusy)
                     Button(action: onImportGPX) {
                         Label("Import GPX", systemImage: "square.and.arrow.down")
                     }
@@ -68,6 +100,29 @@ struct RoutePlannerSheet: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+
+                Section("Schedule this route") {
+                    TextField("Route name", text: $scheduledName)
+                    DatePicker("Start", selection: $scheduledAt, in: Date()..., displayedComponents: [.date, .hourAndMinute])
+                    if distance > 0 {
+                        LabeledContent("Estimated arrival") {
+                            Text(scheduledAt.addingTimeInterval(duration), style: .date)
+                            Text(scheduledAt.addingTimeInterval(duration), style: .time)
+                        }
+                    }
+                    Button {
+                        scheduleSaved = session.scheduleRoute(path, name: scheduledName, startsAt: scheduledAt)
+                    } label: {
+                        Label("Schedule route", systemImage: "calendar.badge.plus")
+                    }
+                    .disabled(path.count < 2 || distance == 0 || isRouting)
+                    if scheduleSaved {
+                        Label("Schedule saved", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(LocusTheme.statusGood)
+                    }
+                }
+
+                ScheduledRoutesSection()
             }
             .navigationTitle("Routes")
             .toolbar {

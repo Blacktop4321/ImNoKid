@@ -10,7 +10,7 @@ enum NativeSpeedError: LocalizedError {
         switch self {
         case .invalidReading: return "The requested coordinates, speed, or course are invalid."
         case .unavailable: return "Native speed helper is not responding. Sideload the helper IPA, unlock your iPhone, and start it with Start-Native-Speed.cmd on Windows."
-        case .incompatibleHelper: return "This is not the Locus native speed helper. Start the helper from the supplied kit."
+        case .incompatibleHelper: return "This is not the RimoSpoof native speed helper. Start the helper from the supplied kit."
         case .rejected(let message): return "Native speed helper: \(message)"
         }
     }

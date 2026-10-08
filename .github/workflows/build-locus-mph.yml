@@ -1,4 +1,4 @@
-name: Build Locus native speed test kit
+name: Build RimoSpoof and native speed helper
 
 on:
   push:
@@ -45,8 +45,8 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Locus-1.0.5-unsigned
-          path: locus/dist/Locus-MPH-unsigned.ipa
+          name: RimoSpoof-1.1.0-unsigned
+          path: locus/dist/RimoSpoof-1.1.0-unsigned.ipa
           if-no-files-found: error
           retention-days: 7
 
@@ -54,7 +54,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Locus-1.0.5-build-log
+          name: RimoSpoof-1.1.0-build-log
           path: locus/build-mph/xcodebuild.log
           if-no-files-found: ignore
           retention-days: 7

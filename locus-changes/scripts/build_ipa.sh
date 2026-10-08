@@ -23,6 +23,10 @@ xcrun swiftc Locus/Support/MovementSpeed.swift Locus/Support/NativeLocationPaylo
   Locus/Support/TunnelAddressMatcher.swift scripts/check_native_speed.swift \
   -o "$build_root/check-native-speed"
 "$build_root/check-native-speed"
+xcrun swiftc Locus/Support/MovementSpeed.swift Locus/Support/PlaybackProgress.swift \
+  Locus/Support/RouteTiming.swift Locus/Support/ScheduledRoute.swift scripts/check_route_features.swift \
+  -o "$build_root/check-route-features"
+"$build_root/check-route-features"
 
 xcodegen generate
 if ! xcodebuild \
@@ -42,13 +46,13 @@ if ! xcodebuild \
   exit 1
 fi
 
-app_path="$build_root/DerivedData/Build/Products/Release-iphoneos/Locus.app"
-test -f "$app_path/Locus"
+app_path="$build_root/DerivedData/Build/Products/Release-iphoneos/RimoSpoof.app"
+test -f "$app_path/RimoSpoof"
 package_root="$(mktemp -d "$build_root/ipa.XXXXXX")"
 trap 'rm -rf "$package_root"' EXIT
 mkdir -p "$package_root/Payload"
-cp -R "$app_path" "$package_root/Payload/Locus.app"
-cp LICENSE "$package_root/Payload/Locus.app/LocusLicense.txt"
+cp -R "$app_path" "$package_root/Payload/RimoSpoof.app"
+cp LICENSE "$package_root/Payload/RimoSpoof.app/LocusLicense.txt"
 ditto -c -k --sequesterRsrc --keepParent \
-  "$package_root/Payload" "$repo_root/dist/Locus-MPH-unsigned.ipa"
-echo "Created dist/Locus-MPH-unsigned.ipa. Sign it with your sideloading tool before installing."
+  "$package_root/Payload" "$repo_root/dist/RimoSpoof-1.1.0-unsigned.ipa"
+echo "Created dist/RimoSpoof-1.1.0-unsigned.ipa. Sign it with your sideloading tool before installing."

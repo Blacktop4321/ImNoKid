@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Locus</string>
+	<string>RimoSpoof</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -39,13 +39,13 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Locus uses your real location so you can aim the map and return home after teleporting.</string>
+	<string>RimoSpoof uses your real location so you can aim the map and return home after teleporting.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Locus keeps a light location session alive so simulated GPS can stay active in the background.</string>
+	<string>RimoSpoof keeps a light location session alive so simulated GPS can stay active in the background.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>Locus reads your phone's activity during Movement check to help diagnose driving detection.</string>
+	<string>RimoSpoof reads your phone's activity during Movement check to help diagnose driving detection.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Locus uses the local network to advertise as a pairable host (iOS 27 pairing) and to reach the developer tunnel (LocalDevVPN) for GPS override.</string>
+	<string>RimoSpoof uses the local network to advertise as a pairable host (iOS 27 pairing) and to reach the developer tunnel (LocalDevVPN) for GPS override.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

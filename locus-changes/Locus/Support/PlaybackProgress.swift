@@ -5,12 +5,15 @@ struct PlaybackProgress {
     static let maximumCatchUpSeconds = 2.0
 
     private let lengths: [Double]
+    let totalDistance: Double
+    private var completedDistance = 0.0
     private(set) var segmentIndex = 0
     private(set) var distanceInSegment = 0.0
     private(set) var lastUpdateTime: Double
 
     init(segmentLengths: [Double], startedAt: Double) {
         lengths = segmentLengths.map { $0.isFinite ? max(0, $0) : 0 }
+        totalDistance = lengths.reduce(0, +)
         lastUpdateTime = startedAt
         skipEmptySegments()
     }
@@ -23,6 +26,16 @@ struct PlaybackProgress {
 
     var remainingInSegment: Double {
         hasFinished ? 0 : lengths[segmentIndex] - distanceInSegment
+    }
+
+    var remainingDistance: Double {
+        hasFinished ? 0 : max(0, totalDistance - completedDistance - distanceInSegment)
+    }
+
+    /// A deliberate pause must not turn into movement when playback resumes.
+    mutating func rebaseClock(to time: Double) {
+        guard time.isFinite, time >= lastUpdateTime else { return }
+        lastUpdateTime = time
     }
 
     mutating func advance(to time: Double, metersPerSecond: Double) {
@@ -39,6 +52,7 @@ struct PlaybackProgress {
                 return
             }
             distance -= remaining
+            completedDistance += lengths[segmentIndex]
             segmentIndex += 1
             distanceInSegment = 0
             skipEmptySegments()

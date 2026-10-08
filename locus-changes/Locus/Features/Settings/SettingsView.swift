@@ -63,8 +63,8 @@ struct SettingsView: View {
                     Text("Developer pairing")
                 } footer: {
                     Text(supportsOnDevicePairing
-                         ? "On iOS 27, use Pair on this iPhone — no computer. Locus advertises a pairable host; confirm the 6-digit code under Settings › Privacy & Security › Developer Mode › Pair with Host. On older iOS, import an RPPairing file from idevice_pair (not a SideStore lockdown .mobiledevicepairing). LiveContainer: enable Fix File Picker on Locus, or use Paste / Share → LiveContainer → Locus."
-                         : "Import an RPPairing file from idevice_pair (not a SideStore lockdown .mobiledevicepairing). If the file picker fails (common in LiveContainer), enable Fix File Picker on the app, share the file into LiveContainer → Locus, or copy the plist and use Paste.")
+                         ? "On iOS 27, use Pair on this iPhone — no computer. RimoSpoof advertises a pairable host; confirm the 6-digit code under Settings › Privacy & Security › Developer Mode › Pair with Host. On older iOS, import an RPPairing file from idevice_pair (not a SideStore lockdown .mobiledevicepairing). LiveContainer: enable Fix File Picker on RimoSpoof, or use Paste / Share → LiveContainer → RimoSpoof."
+                         : "Import an RPPairing file from idevice_pair (not a SideStore lockdown .mobiledevicepairing). If the file picker fails (common in LiveContainer), enable Fix File Picker on the app, share the file into LiveContainer → RimoSpoof, or copy the plist and use Paste.")
                 }
 
                 Section {
@@ -130,19 +130,32 @@ struct SettingsView: View {
                 } header: {
                     Text("Movement")
                 } footer: {
-                    Text("Native speed is experimental: sideload the Locus Speed Helper IPA and start it from Windows using the supplied kit. It sends speed and course through Apple's UI-testing service. It does not simulate Core Motion or guarantee another app's driving detection. Stop spoofing before switching engines. Movement check shows the phone's actual readings.")
+                    Text("Native speed is experimental: sideload the Locus Speed Helper IPA and start it from Windows using the supplied kit. Opening the helper icon alone does not start its testing service. It sends speed and course through Apple's UI-testing service. It does not simulate Core Motion or guarantee another app's driving detection. Stop spoofing before switching engines. Movement check shows the phone's actual readings.")
+                }
+
+                Section("Routes") {
+                    NavigationLink {
+                        ScheduledRoutesView()
+                    } label: {
+                        Label("Scheduled routes", systemImage: "calendar.badge.clock")
+                    }
                 }
 
                 Section("Privacy") {
-                    Text("Fully on-device. Favorites and recents stay in UserDefaults. No analytics, no accounts, nothing uploaded.")
+                    Text("Fully on-device. Favorites, recents, and scheduled routes stay on this iPhone. No analytics, no accounts, nothing uploaded.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
 
                 Section("About") {
                     LabeledContent("Version", value: appVersion)
+                    NavigationLink {
+                        UpdateLogView()
+                    } label: {
+                        Label("Update log", systemImage: "list.bullet.rectangle")
+                    }
                     LabeledContent("Engine", value: session.injectionMode.title)
-                    Text("Locus is free and open source (MIT). Location injection uses the MIT-licensed idevice FFI.")
+                    Text("RimoSpoof is based on ChrisMack32/Locus (MIT). Location injection uses the MIT-licensed idevice FFI.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -151,7 +164,7 @@ struct SettingsView: View {
                     Button {
                         showNameEasterEgg = true
                     } label: {
-                        Text("locus, n. — a place. From the Latin for where you are.")
+                        Text("RimoSpoof · built on Locus")
                             .font(.footnote.italic())
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
