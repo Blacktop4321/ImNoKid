@@ -1,4 +1,4 @@
-name: Build Locus playback and movement check IPA
+name: Build Locus native speed test kit
 
 on:
   push:
@@ -45,7 +45,7 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Locus-1.0.4-unsigned
+          name: Locus-1.0.5-unsigned
           path: locus/dist/Locus-MPH-unsigned.ipa
           if-no-files-found: error
           retention-days: 7
@@ -54,7 +54,54 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: Locus-1.0.4-build-log
+          name: Locus-1.0.5-build-log
           path: locus/build-mph/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  native-speed-helper:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Check out build inputs
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned WebDriverAgent source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: appium/WebDriverAgent
+          ref: 2e98ac0ad4dbc99ab7c8bb01b7216fde252afb54
+          path: webdriveragent
+          persist-credentials: false
+
+      - name: Validate Windows launcher syntax
+        shell: pwsh
+        run: |
+          $locusParseErrors = $null
+          $locusParseTokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD/native-speed-helper/windows/Start-Native-Speed.ps1",
+            [ref]$locusParseTokens, [ref]$locusParseErrors) | Out-Null
+          if ($locusParseErrors.Count) { throw ($locusParseErrors | Out-String) }
+
+      - name: Build native speed helper IPA
+        run: bash native-speed-helper/build_helper.sh webdriveragent native-speed-dist
+
+      - name: Upload helper IPA
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Locus-Native-Speed-Helper-unsigned
+          path: native-speed-dist/Locus-Native-Speed-Helper-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload helper build log
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Locus-Native-Speed-Helper-build-log
+          path: native-speed-dist/helper-xcodebuild.log
           if-no-files-found: ignore
           retention-days: 7

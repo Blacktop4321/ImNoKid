@@ -23,6 +23,12 @@ struct MovementCheckView: View {
             Section {
                 LabeledContent("Playback", value: playbackState)
                 LabeledContent("Selected speed", value: String(format: "%.1f mph", session.speedMPH))
+                LabeledContent("Location engine", value: session.injectionMode.title)
+                if session.injectionMode == .nativeSpeed {
+                    LabeledContent("Speed sent to helper", value: String(format: "%.1f mph",
+                        MovementSpeed.mph(forMetersPerSecond: session.lastSentSpeed)))
+                    LabeledContent("Core Motion simulation", value: "Not provided")
+                }
             } header: {
                 Text("Locus")
             } footer: {

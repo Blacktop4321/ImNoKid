@@ -46,6 +46,19 @@
 	<string>Locus reads your phone's activity during Movement check to help diagnose driving detection.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Locus uses the local network to advertise as a pairable host (iOS 27 pairing) and to reach the developer tunnel (LocalDevVPN) for GPS override.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>127.0.0.1</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_remotepairing._tcp</string>

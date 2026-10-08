@@ -19,6 +19,10 @@ mkdir -p "$build_root" "$repo_root/dist"
 xcrun swiftc Locus/Support/MovementSpeed.swift Locus/Support/PlaybackProgress.swift scripts/check_movement_speed.swift \
   -o "$build_root/check-movement-speed"
 "$build_root/check-movement-speed"
+xcrun swiftc Locus/Support/MovementSpeed.swift Locus/Support/NativeLocationPayload.swift \
+  Locus/Support/TunnelAddressMatcher.swift scripts/check_native_speed.swift \
+  -o "$build_root/check-native-speed"
+"$build_root/check-native-speed"
 
 xcodegen generate
 if ! xcodebuild \

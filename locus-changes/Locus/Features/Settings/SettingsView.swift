@@ -11,6 +11,9 @@ struct SettingsView: View {
     @State private var showNameEasterEgg = false
     @State private var tunnelIP = TunnelConfig.targetIP
     @State private var localDevVPNInstalled = LocalDevVPN.isInstalled
+    @State private var tunnelDetected = LocalDevVPN.isConnected
+    @State private var helperStatus = "Not checked"
+    @State private var checkingHelper = false
     @Environment(\.scenePhase) private var scenePhase
 
     private var supportsOnDevicePairing: Bool {
@@ -72,11 +75,12 @@ struct SettingsView: View {
                             TunnelConfig.setTargetIP(tunnelIP)
                         }
                     LabeledContent("Status") {
-                        Text(LocalDevVPN.isConnected ? "Connected" : "Not connected")
-                            .foregroundStyle(LocalDevVPN.isConnected ? LocusTheme.statusGood : LocusTheme.statusWarn)
+                        Text(tunnelDetected ? "Tunnel detected" : "Not detected")
+                            .foregroundStyle(tunnelDetected ? LocusTheme.statusGood : LocusTheme.statusWarn)
                     }
                     Button("Save tunnel IP") {
                         TunnelConfig.setTargetIP(tunnelIP)
+                        tunnelDetected = LocalDevVPN.isConnected
                     }
                     Button {
                         if localDevVPNInstalled {
@@ -93,10 +97,31 @@ struct SettingsView: View {
                 } header: {
                     Text("Tunnel")
                 } footer: {
-                    Text("Connect LocalDevVPN before teleporting. Default tunnel IP is 10.7.0.1. Start a spoof on Wi‑Fi first; it can keep working on cellular afterward.")
+                    Text("For Coordinates mode, connect LocalDevVPN first. Use its Device IP (usually 10.7.0.1), not its Tunnel IP (usually 10.7.1.1). Interface detection is a network check; confirm the connection inside LocalDevVPN. Start on Wi‑Fi first.")
                 }
 
                 Section {
+                    Picker("Location engine", selection: $session.injectionMode) {
+                        ForEach(InjectionMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .disabled(session.isSpoofing || session.isBusy || session.routePlaybackActive || session.joystickActive)
+                    if session.injectionMode == .nativeSpeed {
+                        LabeledContent("Helper", value: helperStatus)
+                        Button("Check native speed helper") {
+                            checkingHelper = true
+                            Task {
+                                let result = await Task.detached { NativeSpeedEngine.check() }.value
+                                switch result {
+                                case .success: helperStatus = "Ready"
+                                case .failure(let error): helperStatus = error.localizedDescription
+                                }
+                                checkingHelper = false
+                            }
+                        }
+                        .disabled(checkingHelper)
+                    }
                     NavigationLink {
                         MovementCheckView()
                     } label: {
@@ -105,7 +130,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Movement")
                 } footer: {
-                    Text("Check the speed and activity reported by your iPhone while a route is running.")
+                    Text("Native speed is experimental: sideload the Locus Speed Helper IPA and start it from Windows using the supplied kit. It sends speed and course through Apple's UI-testing service. It does not simulate Core Motion or guarantee another app's driving detection. Stop spoofing before switching engines. Movement check shows the phone's actual readings.")
                 }
 
                 Section("Privacy") {
@@ -116,7 +141,7 @@ struct SettingsView: View {
 
                 Section("About") {
                     LabeledContent("Version", value: appVersion)
-                    LabeledContent("Engine", value: "idevice DVT location simulation")
+                    LabeledContent("Engine", value: session.injectionMode.title)
                     Text("Locus is free and open source (MIT). Location injection uses the MIT-licensed idevice FFI.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -170,11 +195,16 @@ struct SettingsView: View {
             }
             .onAppear {
                 localDevVPNInstalled = LocalDevVPN.isInstalled
+                tunnelDetected = LocalDevVPN.isConnected
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     localDevVPNInstalled = LocalDevVPN.isInstalled
+                    tunnelDetected = LocalDevVPN.isConnected
                 }
+            }
+            .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+                tunnelDetected = LocalDevVPN.isConnected
             }
         }
     }

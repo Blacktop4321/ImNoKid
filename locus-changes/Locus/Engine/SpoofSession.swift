@@ -85,6 +85,13 @@ final class SpoofSession: ObservableObject {
     @Published var isBusy = false
     @Published var joystickActive = false
     @Published private(set) var routePlaybackActive = false
+    @Published var injectionMode: InjectionMode = InjectionMode(
+        rawValue: UserDefaults.standard.string(forKey: "locus.injectionMode") ?? "coordinates"
+    ) ?? .coordinates {
+        didSet { UserDefaults.standard.set(injectionMode.rawValue, forKey: "locus.injectionMode") }
+    }
+    @Published private(set) var lastSentSpeed = 0.0
+    @Published private(set) var lastSentCourse = -1.0
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
@@ -128,7 +135,7 @@ final class SpoofSession: ObservableObject {
     }
 
     func teleport(to coordinate: CLLocationCoordinate2D, pairing: PairingStore) {
-        guard pairing.hasPairingFile else {
+        guard pairing.hasPairingFile || injectionMode == .nativeSpeed else {
             lastError = "Import an RPPairing file in Settings first."
             return
         }
@@ -144,11 +151,15 @@ final class SpoofSession: ObservableObject {
         stopResend()
         stopHealth()
         isBusy = true
-        let result = LocationEngine.clear()
+        let result: Result<Void, Error> = injectionMode == .nativeSpeed
+            ? NativeSpeedEngine.clear().mapError { $0 as Error }
+            : LocationEngine.clear().mapError { $0 as Error }
         isBusy = false
         switch result {
         case .success:
             simulated = nil
+            lastSentSpeed = 0
+            lastSentCourse = -1
             status = .idle
             endBackground()
             // Keep location updates running so the map puck / locate button
@@ -172,7 +183,7 @@ final class SpoofSession: ObservableObject {
     }
 
     func startJoystick(pairing: PairingStore) {
-        guard pairing.hasPairingFile else {
+        guard pairing.hasPairingFile || injectionMode == .nativeSpeed else {
             lastError = "Import an RPPairing file in Settings first."
             return
         }
@@ -200,14 +211,17 @@ final class SpoofSession: ObservableObject {
     }
 
     func stopJoystick() {
+        let wasActive = joystickActive
         joystickActive = false
         joystickVector = .zero
         joystickTimer?.invalidate()
         joystickTimer = nil
+        if wasActive { sendRestingSpeed() }
     }
 
     func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
-        guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
+        guard pairing.hasPairingFile || injectionMode == .nativeSpeed,
+              coordinates.count >= 2 else { return }
         cancelRoute()
         stopJoystick()
         let generation = UUID()
@@ -256,17 +270,26 @@ final class SpoofSession: ObservableObject {
                         longitude: start.longitude + (end.longitude - start.longitude) * progress.fraction
                     )
                 }
-                self.apply(coordinate, pairing: pairing, markRecent: false)
+                let course = progress.hasFinished ? -1 : NativeLocationPayload.bearing(
+                    fromLatitude: coordinates[progress.segmentIndex].latitude,
+                    fromLongitude: coordinates[progress.segmentIndex].longitude,
+                    toLatitude: coordinates[progress.segmentIndex + 1].latitude,
+                    toLongitude: coordinates[progress.segmentIndex + 1].longitude
+                )
+                self.apply(coordinate, pairing: pairing, markRecent: false,
+                           speed: progress.hasFinished ? 0 : speed, course: course)
                 if self.status.isDropped || self.status == .idle { return }
             }
         }
     }
 
     private func cancelRoute() {
+        let wasActive = routePlaybackActive
         routeTask?.cancel()
         routeTask = nil
         routeGeneration = nil
         routePlaybackActive = false
+        if wasActive { sendRestingSpeed() }
     }
 
     func addFavorite(name: String, coordinate: CLLocationCoordinate2D) {
@@ -339,20 +362,18 @@ final class SpoofSession: ObservableObject {
         return false
     }
 
-    private func apply(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore, markRecent: Bool) {
+    private func apply(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore,
+                       markRecent: Bool, speed: Double = 0, course: Double = -1) {
         if status == .idle || status.isDropped {
             status = .connecting
         }
         isBusy = true
-        let result = LocationEngine.set(
-            latitude: coordinate.latitude,
-            longitude: coordinate.longitude,
-            pairingPath: pairing.pairingPath,
-            deviceIP: TunnelConfig.targetIP
-        )
+        let result = send(coordinate, pairing: pairing, speed: speed, course: course)
         isBusy = false
         switch result {
         case .success:
+            lastSentSpeed = injectionMode == .nativeSpeed ? speed : 0
+            lastSentCourse = injectionMode == .nativeSpeed ? course : -1
             simulated = coordinate
             pin = coordinate
             status = .active
@@ -381,26 +402,54 @@ final class SpoofSession: ObservableObject {
         let elapsed = min(max(0, now - joystickLastTick), PlaybackProgress.maximumCatchUpSeconds)
         joystickLastTick = now
         let magnitude = hypot(joystickVector.dx, joystickVector.dy)
-        guard magnitude > 0.08 else { return }
+        guard magnitude > 0.08 else {
+            if lastSentSpeed > 0 { sendRestingSpeed() }
+            return
+        }
         let nx = joystickVector.dx / magnitude
         let ny = -joystickVector.dy / magnitude
         let speed = movementSpeedMetersPerSecond() * min(1.0, magnitude)
         let meters = speed * elapsed
         let next = offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters)
-        apply(next, pairing: pairing, markRecent: false)
+        let course = (atan2(Double(nx), Double(ny)) * 180 / .pi + 360)
+            .truncatingRemainder(dividingBy: 360)
+        apply(next, pairing: pairing, markRecent: false, speed: speed, course: course)
+    }
+
+    private func send(_ coordinate: CLLocationCoordinate2D, pairing: PairingStore,
+                      speed: Double, course: Double) -> Result<Void, Error> {
+        switch injectionMode {
+        case .coordinates:
+            return LocationEngine.set(latitude: coordinate.latitude, longitude: coordinate.longitude,
+                                      pairingPath: pairing.pairingPath, deviceIP: TunnelConfig.targetIP)
+                .mapError { $0 as Error }
+        case .nativeSpeed:
+            return NativeSpeedEngine.set(latitude: coordinate.latitude, longitude: coordinate.longitude,
+                                         speed: speed, course: course)
+                .mapError { $0 as Error }
+        }
+    }
+
+    private func sendRestingSpeed() {
+        guard injectionMode == .nativeSpeed, lastSentSpeed > 0, let coordinate = simulated else { return }
+        switch NativeSpeedEngine.set(latitude: coordinate.latitude, longitude: coordinate.longitude,
+                                    speed: 0, course: -1) {
+        case .success:
+            lastSentSpeed = 0
+            lastSentCourse = -1
+        case .failure(let error):
+            lastError = error.localizedDescription
+            status = .dropped(error.localizedDescription)
+        }
     }
 
     private func startResend(pairing: PairingStore) {
         resendTimer?.invalidate()
         resendTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let sim = self.simulated else { return }
-                _ = LocationEngine.set(
-                    latitude: sim.latitude,
-                    longitude: sim.longitude,
-                    pairingPath: pairing.pairingPath,
-                    deviceIP: TunnelConfig.targetIP
-                )
+                guard let self, let sim = self.simulated,
+                      !self.routePlaybackActive, !self.joystickActive else { return }
+                _ = self.send(sim, pairing: pairing, speed: 0, course: -1)
             }
         }
     }
@@ -418,7 +467,8 @@ final class SpoofSession: ObservableObject {
                 if case .dropped = self.status {
                     self.status = .reconnecting
                     self.apply(sim, pairing: pairing, markRecent: false)
-                } else if !LocationEngine.isSessionActive, self.isSpoofing {
+                } else if !(self.injectionMode == .nativeSpeed
+                            ? NativeSpeedEngine.isSessionActive : LocationEngine.isSessionActive), self.isSpoofing {
                     self.status = .reconnecting
                     self.apply(sim, pairing: pairing, markRecent: false)
                 }
