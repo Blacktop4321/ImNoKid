@@ -16,7 +16,7 @@ fi
 build_root="$repo_root/build-mph"
 mkdir -p "$build_root" "$repo_root/dist"
 
-xcrun swiftc Locus/Support/MovementSpeed.swift scripts/check_movement_speed.swift \
+xcrun swiftc Locus/Support/MovementSpeed.swift Locus/Support/PlaybackProgress.swift scripts/check_movement_speed.swift \
   -o "$build_root/check-movement-speed"
 "$build_root/check-movement-speed"
 

@@ -84,6 +84,7 @@ final class SpoofSession: ObservableObject {
     @Published var lastError: String?
     @Published var isBusy = false
     @Published var joystickActive = false
+    @Published private(set) var routePlaybackActive = false
 
     @Published var favorites: [SavedPlace] = []
     @Published var recents: [SavedPlace] = []
@@ -92,6 +93,8 @@ final class SpoofSession: ObservableObject {
     private var healthTimer: Timer?
     private var joystickTimer: Timer?
     private var routeTask: Task<Void, Never>?
+    private var routeGeneration: UUID?
+    private var joystickLastTick = 0.0
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
     private var joystickVector: CGVector = .zero
     private let locationKeeper = BackgroundKeepAlive()
@@ -129,16 +132,14 @@ final class SpoofSession: ObservableObject {
             lastError = "Import an RPPairing file in Settings first."
             return
         }
-        routeTask?.cancel()
-        routeTask = nil
+        cancelRoute()
         stopJoystick()
         pin = coordinate
         apply(coordinate, pairing: pairing, markRecent: true)
     }
 
     func stop(pairing: PairingStore) {
-        routeTask?.cancel()
-        routeTask = nil
+        cancelRoute()
         stopJoystick()
         stopResend()
         stopHealth()
@@ -180,12 +181,12 @@ final class SpoofSession: ObservableObject {
             lastError = "Drop a pin or teleport somewhere before using the joystick."
             return
         }
-        routeTask?.cancel()
-        routeTask = nil
+        cancelRoute()
         if simulated == nil {
             apply(start, pairing: pairing, markRecent: false)
         }
         joystickActive = true
+        joystickLastTick = ProcessInfo.processInfo.systemUptime
         joystickTimer?.invalidate()
         joystickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -207,51 +208,65 @@ final class SpoofSession: ObservableObject {
 
     func followRoute(_ coordinates: [CLLocationCoordinate2D], pairing: PairingStore) {
         guard pairing.hasPairingFile, coordinates.count >= 2 else { return }
-        routeTask?.cancel()
+        cancelRoute()
         stopJoystick()
+        let generation = UUID()
+        routeGeneration = generation
+        routePlaybackActive = true
         routeTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
-            var previous = coordinates[0]
-            await MainActor.run {
-                self.apply(previous, pairing: pairing, markRecent: true)
+            defer {
+                if self.routeGeneration == generation {
+                    self.routePlaybackActive = false
+                    self.routeTask = nil
+                    self.routeGeneration = nil
+                }
             }
+            self.apply(coordinates[0], pairing: pairing, markRecent: true)
             guard self.isSpoofing else { return }
-            for next in coordinates.dropFirst() {
-                if Task.isCancelled { return }
-                let distance = CLLocation(latitude: previous.latitude, longitude: previous.longitude)
-                    .distance(from: CLLocation(latitude: next.latitude, longitude: next.longitude))
-                guard distance.isFinite, distance > 0 else {
-                    previous = next
-                    continue
+            let lengths = zip(coordinates, coordinates.dropFirst()).map { start, end in
+                CLLocation(latitude: start.latitude, longitude: start.longitude)
+                    .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
+            }
+            var progress = PlaybackProgress(
+                segmentLengths: lengths,
+                startedAt: ProcessInfo.processInfo.systemUptime
+            )
+            while !progress.hasFinished {
+                if Task.isCancelled || self.routeGeneration != generation { return }
+                let speed = self.movementSpeedMetersPerSecond()
+                let interval = min(MovementSpeed.maximumStepSeconds, progress.remainingInSegment / speed)
+                let deadline = progress.lastUpdateTime + interval
+                let delay = max(0, deadline - ProcessInfo.processInfo.systemUptime)
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                } catch {
+                    return
                 }
-                var traveled = 0.0
-                while traveled < distance {
-                    if Task.isCancelled { return }
-                    // Read the control on every step so edits apply during playback.
-                    guard let step = MovementSpeed.nextStep(
-                        remainingMeters: distance - traveled,
-                        metersPerSecond: self.movementSpeedMetersPerSecond()
-                    ) else { return }
-                    do {
-                        try await Task.sleep(nanoseconds: UInt64(step.delaySeconds * 1_000_000_000))
-                    } catch {
-                        return
-                    }
-                    if Task.isCancelled { return }
-                    traveled = min(distance, traveled + step.distanceMeters)
-                    let t = traveled / distance
-                    let coord = CLLocationCoordinate2D(
-                        latitude: previous.latitude + (next.latitude - previous.latitude) * t,
-                        longitude: previous.longitude + (next.longitude - previous.longitude) * t
+                if Task.isCancelled || self.routeGeneration != generation { return }
+                progress.advance(to: ProcessInfo.processInfo.systemUptime, metersPerSecond: speed)
+                let coordinate: CLLocationCoordinate2D
+                if progress.hasFinished {
+                    coordinate = coordinates[coordinates.count - 1]
+                } else {
+                    let start = coordinates[progress.segmentIndex]
+                    let end = coordinates[progress.segmentIndex + 1]
+                    coordinate = CLLocationCoordinate2D(
+                        latitude: start.latitude + (end.latitude - start.latitude) * progress.fraction,
+                        longitude: start.longitude + (end.longitude - start.longitude) * progress.fraction
                     )
-                    await MainActor.run {
-                        self.apply(coord, pairing: pairing, markRecent: false)
-                    }
-                    if self.status.isDropped || self.status == .idle { return }
                 }
-                previous = next
+                self.apply(coordinate, pairing: pairing, markRecent: false)
+                if self.status.isDropped || self.status == .idle { return }
             }
         }
+    }
+
+    private func cancelRoute() {
+        routeTask?.cancel()
+        routeTask = nil
+        routeGeneration = nil
+        routePlaybackActive = false
     }
 
     func addFavorite(name: String, coordinate: CLLocationCoordinate2D) {
@@ -362,13 +377,15 @@ final class SpoofSession: ObservableObject {
 
     private func tickJoystick(pairing: PairingStore) {
         guard joystickActive, let current = simulated else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsed = min(max(0, now - joystickLastTick), PlaybackProgress.maximumCatchUpSeconds)
+        joystickLastTick = now
         let magnitude = hypot(joystickVector.dx, joystickVector.dy)
         guard magnitude > 0.08 else { return }
         let nx = joystickVector.dx / magnitude
         let ny = -joystickVector.dy / magnitude
         let speed = movementSpeedMetersPerSecond() * min(1.0, magnitude)
-        let dt = 0.25
-        let meters = speed * dt
+        let meters = speed * elapsed
         let next = offset(coordinate: current, eastMeters: nx * meters, northMeters: ny * meters)
         apply(next, pairing: pairing, markRecent: false)
     }

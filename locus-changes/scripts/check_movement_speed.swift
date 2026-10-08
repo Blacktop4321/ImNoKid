@@ -40,6 +40,36 @@ struct MovementSpeedCheck {
         let slow = MovementSpeed.nextStep(remainingMeters: 100, metersPerSecond: 1)!
         let fast = MovementSpeed.nextStep(remainingMeters: 100, metersPerSecond: 10)!
         close(fast.distanceMeters / slow.distanceMeters, 10, "live speed change")
+
+        // Sending a coordinate must consume the playback interval, not be added
+        // to it. Advance through corners when a delayed update crosses them.
+        var progress = PlaybackProgress(segmentLengths: [5, 0, 5, 90], startedAt: 0)
+        progress.advance(to: 0.5, metersPerSecond: 10)
+        precondition(progress.segmentIndex == 2)
+        close(progress.fraction, 0, "corner with repeated point")
+        progress.advance(to: 1.2, metersPerSecond: 10)
+        precondition(progress.segmentIndex == 3)
+        close(progress.distanceInSegment, 2, "send latency carries through corner")
+        progress.advance(to: 2.0, metersPerSecond: 20)
+        close(progress.distanceInSegment, 18, "speed change with elapsed time")
+        progress.advance(to: 3.0, metersPerSecond: 100)
+        precondition(progress.hasFinished)
+
+        // Variable send delays still move 30 mph over a 10-second route window.
+        let selectedSpeed = MovementSpeed.metersPerSecond(forMPH: 30)
+        var delayed = PlaybackProgress(segmentLengths: [1_000], startedAt: 0)
+        for time in [0.5, 1.0, 1.7, 2.2, 2.9, 3.7, 4.2, 5.1, 6.2, 7.4, 8.0, 9.0, 10.0] {
+            delayed.advance(to: time, metersPerSecond: selectedSpeed)
+        }
+        close(delayed.distanceInSegment / 10, selectedSpeed, "real-time speed with send latency")
+
+        var paused = PlaybackProgress(segmentLengths: [1_000], startedAt: 0)
+        paused.advance(to: 30, metersPerSecond: 10)
+        close(paused.distanceInSegment, 20, "long suspension is capped")
+        paused.advance(to: 29, metersPerSecond: 10)
+        close(paused.distanceInSegment, 20, "backward clock rejected")
+        let empty = PlaybackProgress(segmentLengths: [0, .nan, -1], startedAt: 0)
+        precondition(empty.hasFinished)
         print("Movement-speed checks passed.")
     }
 }

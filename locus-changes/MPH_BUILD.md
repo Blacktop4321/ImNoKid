@@ -52,3 +52,22 @@ bash scripts/build_ipa.sh
 Based on https://github.com/ChrisMack32/Locus, commit 83c8fb324983728e8f44759cfd834dc637ee38b5.
 The original MIT license is retained. This package is a local modification and
 is not an official upstream release.
+
+## 1.0.4 movement check update
+
+Route and joystick playback now use elapsed monotonic time so that time spent
+sending coordinates does not slow every movement step. Delayed route updates can
+advance across multiple segments; a pause longer than two seconds is capped to
+avoid a large jump after app suspension. Cancellation keeps a replaced route from
+changing the new route's playback state.
+
+Settings → Movement check reads the iOS-reported location speed, update time,
+accuracy, software-simulation flag, motion activity, and permission status. The
+readout is opt-in by opening that page, stays on the phone, and stops when the page
+closes. Locus and Life360 have separate motion/location permissions.
+
+This update does **not** inject Core Motion automotive activity or a native speed
+field. The idevice DVT location setter accepts only latitude and longitude.
+Life360/Arity decides whether to recognize a drive; the car icon has not been
+validated on a physical phone. Selected MPH is route movement speed, not a promise
+that another app receives that speed from CLLocation.
