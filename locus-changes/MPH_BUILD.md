@@ -1,73 +1,25 @@
-# Locus MPH modification
+# Locus 1.0.5 native speed experiment
 
-This package changes Locus 1.0.2 to add a 0.5–100 mph slider and fine adjustment
-buttons on the map and Routes screen. Changing travel mode restores its preset;
-Reset also restores it. Speed variation is optional and off by default.
-Route speed changes apply during playback, and the full joystick uses the same
-target speed. A partial joystick position produces a lower speed.
+This modification adds adjustable 0.5–100 mph, elapsed-time route and joystick playback, and a live Movement check. The default Coordinates engine uses idevice DVT and changes latitude and longitude only.
 
-Only GPS coordinate movement is simulated. This modification does not override
-Core Motion, guarantee Life360's driving icon, or force the speed another app
-reports. Device latency and location update behavior can affect measured speed.
+The optional Native speed helper engine sends a full CLLocation reading with speed, course, timestamp, and accuracy through a separately installed and running XCTest helper. The helper uses pinned Appium/WebDriverAgent source, exposes location-only HTTP routes on loopback, and disables screenshot streaming. Core Motion automotive activity is not simulated.
 
-## Build from Windows using GitHub
+## Setup
 
-1. Sign into GitHub and fork https://github.com/ChrisMack32/Locus.
-2. Unzip `Locus_MPH_Changes.zip`. The archive contains changed and new files,
-   not the complete original app. In your fork, use **Add file → Upload files**
-   to upload the contents while preserving their folders, including `.github`.
-   These files belong at the repository root, not inside an extra wrapper folder.
-3. Commit the upload to the fork's default branch. Do not upload the ZIP itself.
-4. Open **Actions**. If GitHub asks, enable Actions for your fork. Select
-   **Build Locus MPH IPA → Run workflow**.
-5. After a successful run, open its **Artifacts** and download
-   **Locus-MPH-unsigned**. Unzip that download to obtain the IPA.
-6. Sign the IPA with your own sideloading tool before installing it. The same
-   bundle ID is retained, so an installation can replace the original Locus app.
+Extract the native speed kit on Windows. Sideload both IPAs with Sideloadly, enable Developer Mode, and trust your developer. Install Python 3.12 or newer, connect and unlock the phone over USB, and run `Start-Native-Speed.cmd`. Keep the window and USB connection open. The launcher discovers the helper identifier, prepares the developer image, and starts its test service.
 
-The workflow builds on a standard GitHub-hosted Mac runner. It does not require
-an Apple account or signing certificate in GitHub. Standard runners are free
-for public repositories; private repositories use the account's Actions quota.
-No releases or public downloads are published by the workflow.
+Stop any existing spoof in Locus. In Settings choose **Native speed helper (experimental)** and check that it is Ready. Start a road route at 30 mph and open **Movement check**. **Speed sent to helper** is the request; **iOS reported speed** is what the phone delivered. These readings and permissions belong to Locus separately from Life360.
 
-## Validation status
+Stop spoofing in Locus before closing the launcher. If an interrupted helper leaves a simulated fix active and Stop cannot reach it, restart the phone. For Coordinates mode use LocalDevVPN's Device IP, usually 10.7.0.1. Its local interface is normally 10.7.1.1; the interface check now recognizes this address.
 
-The GitHub Mac build passed on October 8, 2026 with Xcode 26.6, including the
-independent speed checks and the Release iPhone app build. The downloaded IPA
-was checked for ZIP integrity, ARM64 architecture, version 1.0.3/build 4, an
-iOS 18 minimum, and the presence of the new mph controls in the executable.
-Installation and behavior on a physical phone have not been tested here.
-If a later build fails, download `Locus-MPH-build-log` for diagnosis.
+## Validation and limitations
 
-## Local Mac build
+GitHub Actions run 37727953794 passed both native iPhone builds, playback and native payload/course/tunnel checks, and Windows launcher syntax on October 8, 2026. Downloaded packages passed ZIP integrity and ARM64/bundle checks. The helper contains the complete native-speed CLLocation initializer and loopback location API.
 
-Use Xcode 26 or later and XcodeGen, then run:
+Installation, Windows execution, physical-phone field forwarding, and Life360 driving detection remain unverified. Neither engine guarantees a car icon. The kit does not simulate Core Motion, remove Apple's simulated-location flag, or modify Life360.
 
-```sh
-bash scripts/build_ipa.sh
-```
+## Sources and licenses
 
-## Upstream and license
-
-Based on https://github.com/ChrisMack32/Locus, commit 83c8fb324983728e8f44759cfd834dc637ee38b5.
-The original MIT license is retained. This package is a local modification and
-is not an official upstream release.
-
-## 1.0.4 movement check update
-
-Route and joystick playback now use elapsed monotonic time so that time spent
-sending coordinates does not slow every movement step. Delayed route updates can
-advance across multiple segments; a pause longer than two seconds is capped to
-avoid a large jump after app suspension. Cancellation keeps a replaced route from
-changing the new route's playback state.
-
-Settings → Movement check reads the iOS-reported location speed, update time,
-accuracy, software-simulation flag, motion activity, and permission status. The
-readout is opt-in by opening that page, stays on the phone, and stops when the page
-closes. Locus and Life360 have separate motion/location permissions.
-
-This update does **not** inject Core Motion automotive activity or a native speed
-field. The idevice DVT location setter accepts only latitude and longitude.
-Life360/Arity decides whether to recognize a drive; the car icon has not been
-validated on a physical phone. Selected MPH is route movement speed, not a promise
-that another app receives that speed from CLLocation.
+Locus: https://github.com/ChrisMack32/Locus at 83c8fb324983728e8f44759cfd834dc637ee38b5 (MIT).
+Helper: https://github.com/appium/WebDriverAgent at 2e98ac0ad4dbc99ab7c8bb01b7216fde252afb54 (BSD).
+Original licenses are retained in the respective app packages.
