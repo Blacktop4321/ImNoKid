@@ -32,11 +32,12 @@ No releases or public downloads are published by the workflow.
 
 ## Validation status
 
-The source and workflow have been checked locally for syntax and formatting.
-This environment cannot compile UIKit/SwiftUI apps or run a device test. The
-workflow compiles and runs independent speed checks before building the app.
-An IPA should only be treated as built after that workflow succeeds. If it
-fails, download `Locus-MPH-build-log` and send the log for diagnosis.
+The GitHub Mac build passed on October 8, 2026 with Xcode 26.6, including the
+independent speed checks and the Release iPhone app build. The downloaded IPA
+was checked for ZIP integrity, ARM64 architecture, version 1.0.3/build 4, an
+iOS 18 minimum, and the presence of the new mph controls in the executable.
+Installation and behavior on a physical phone have not been tested here.
+If a later build fails, download `Locus-MPH-build-log` for diagnosis.
 
 ## Local Mac build
 

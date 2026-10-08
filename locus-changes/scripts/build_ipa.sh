@@ -44,6 +44,7 @@ package_root="$(mktemp -d "$build_root/ipa.XXXXXX")"
 trap 'rm -rf "$package_root"' EXIT
 mkdir -p "$package_root/Payload"
 cp -R "$app_path" "$package_root/Payload/Locus.app"
+cp LICENSE "$package_root/Payload/Locus.app/LocusLicense.txt"
 ditto -c -k --sequesterRsrc --keepParent \
   "$package_root/Payload" "$repo_root/dist/Locus-MPH-unsigned.ipa"
 echo "Created dist/Locus-MPH-unsigned.ipa. Sign it with your sideloading tool before installing."
